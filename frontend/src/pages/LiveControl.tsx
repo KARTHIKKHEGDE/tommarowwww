@@ -253,20 +253,7 @@ const LiveControl = () => {
                         <div className="absolute bottom-0 left-0 w-2 h-2 border-b border-l border-[#00ff9c] opacity-50" />
                     </div>
 
-                    {/* Metrics Panel */}
-                    <div className="space-y-4">
-                        <div className="bg-[#0a0a0a] p-3 border-l-2 border-red-500 relative overflow-hidden">
-                            <div className="text-[9px] text-red-700 uppercase tracking-widest mb-1">Legacy Algo (Fixed)</div>
-                            <div className="text-2xl font-bold text-red-500">{status.fixed_metrics.waiting_time.toFixed(1)}<span className="text-xs ml-1">avg/s</span></div>
-                            <div className="absolute bottom-0 right-0 p-1 opacity-10 text-red-500"><ShieldAlert className="w-8 h-8" /></div>
-                        </div>
 
-                        <div className="bg-[#0a0a0a] p-3 border-l-2 border-[#00ff9c] relative overflow-hidden">
-                            <div className="text-[9px] text-[#00ff9c]/70 uppercase tracking-widest mb-1">Deep Q-Network</div>
-                            <div className="text-2xl font-bold text-[#00ff9c]">{status.rl_metrics.waiting_time.toFixed(1)}<span className="text-xs ml-1">avg/s</span></div>
-                            <div className="absolute bottom-0 right-0 p-1 opacity-10 text-[#00ff9c]"><Zap className="w-8 h-8" /></div>
-                        </div>
-                    </div>
 
                     {/* Analytics Control */}
                     <div className="bg-[#0a0a0a] border border-[#00ff9c]/20 p-3 relative group hover:border-[#00ff9c]/50 transition-colors cursor-pointer" onClick={() => navigate('/analytics')}>
