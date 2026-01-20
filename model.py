@@ -111,3 +111,7 @@ class TestModel:
     @property
     def input_dim(self):
         return self._input_dim
+
+    @property
+    def model(self):
+        return self._model

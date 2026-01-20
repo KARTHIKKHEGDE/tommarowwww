@@ -46,16 +46,6 @@ async def list_scenarios() -> List[Scenario]:
             features=["Enterprise Load Test", "Network Coordination", "Multi-Junction Optimization"]
         ),
         Scenario(
-            id="bangalore_silk_board",
-            name="BANGALORE - SILK BOARD JUNCTION",
-            code="SCENARIO_BLR_001",
-            complexity="EXTREME",
-            agents="01",
-            description="Real-world simulation of Bangalore's most congested intersection (Silk Board). 150m radius scope focusing on the central junction dynamics.",
-            badge="REAL WORLD",
-            features=["Actual Road Network", "Observed Traffic Data", "Complex Geometry"]
-        ),
-        Scenario(
             id="bangalore_hosmat",
             name="BANGALORE - HOSMAT MAP",
             code="SCENARIO_BLR_002",
@@ -64,6 +54,16 @@ async def list_scenarios() -> List[Scenario]:
             description="Real-world simulation of the Hosmat Hospital Junction. Specific focus on ambulance priority lanes and mixed vehicle dynamics.",
             badge="REAL WORLD",
             features=["Ambulance Priority", "Hospital Zone Logic", "Mixed Vehicle Types"]
+        ),
+        Scenario(
+            id="bangalore_hebbal",
+            name="BANGALORE - HEBBAL SERVICE ROAD",
+            code="SCENARIO_BLR_004",
+            complexity="HIGH",
+            agents="01",
+            description="Hebbal service road junction. Brutal congestion with heavy bus and truck flow, excluding flyovers.",
+            badge="HEAVY FLOW",
+            features=["Lane Discipline Issues", "Heavy Bus/Truck Flow", "Multi-Agent RL"]
         )
     ]
     

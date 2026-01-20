@@ -68,7 +68,104 @@ class RLAgent:
             'phase_changes': 0,
             'decisions': []
         }
+
+        # Dynamic Phase Detection
+        self.available_phases = []
+        self.action_phase_map = {}
+        self._detect_phases()
         
+    def _detect_phases(self):
+        """
+        Dynamically map RL Actions (0-3) to Physical Phases based on lane geometry.
+        Action 0: NS Straight (Dirs 2, 6)
+        Action 1: NS Left (Dirs 3, 7)
+        Action 2: EW Straight (Dirs 0, 4)
+        Action 3: EW Left (Dirs 1, 5)
+        """
+        try:
+            # Get phase logic
+            logics = self.connection.trafficlight.getAllProgramLogics(self.tls_id)
+            if not logics: return
+            logic = logics[0]
+            
+            # Get links (connections) for each signal index
+            # links[i] = [(from, to, via), ...]
+            links = self.connection.trafficlight.getControlledLinks(self.tls_id)
+            
+            # 1. Map Signal Indices to Directions
+            # index_directions[i] = {dir_code, ...}
+            index_directions = {}
+            for i, connection_list in enumerate(links):
+                dirs = set()
+                for conn in connection_list:
+                    incoming_lane = conn[0]
+                    d = self._get_lane_group(incoming_lane)
+                    if d != -1: dirs.add(d)
+                index_directions[i] = dirs
+
+            # 2. Analyze Each Phase
+            # phase_serves[p_idx] = {dir_code, ...}
+            phase_serves = {}
+            valid_phases = []
+            
+            for p_idx, phase in enumerate(logic.phases):
+                served = set()
+                # Check for Green
+                if 'G' in phase.state or 'g' in phase.state:
+                    # Collect directions served by this phase
+                    for i, char in enumerate(phase.state):
+                        if char in ['G', 'g'] and i in index_directions:
+                            served.update(index_directions[i])
+                    
+                    if served:
+                         phase_serves[p_idx] = served
+                         valid_phases.append(p_idx)
+
+            self.available_phases = valid_phases or list(range(0, len(logic.phases), 2))
+
+            # 3. Map Actions to Best Phases
+            # Target Directions for each Action
+            action_targets = {
+                0: {2, 6}, # NS Straight
+                1: {3, 7}, # NS Left
+                2: {0, 4}, # EW Straight
+                3: {1, 5}  # EW Left
+            }
+
+            for action_code, targets in action_targets.items():
+                best_phase = -1
+                best_score = -1
+                
+                for p_idx, served in phase_serves.items():
+                    # Score = how many target directions are served
+                    # Subtract penalty for serving non-target directions? (Optional)
+                    
+                    # Simple intersection: count matches
+                    match_count = len(targets.intersection(served))
+                    
+                    if match_count > best_score:
+                        best_score = match_count
+                        best_phase = p_idx
+                    elif match_count == best_score and match_count > 0:
+                        # Tie breaker: prefer phase with fewer 'other' directions?
+                        pass
+                
+                if best_phase != -1:
+                    self.action_phase_map[action_code] = best_phase
+                else:
+                    # Fallback: Map to any valid phase cyclicly
+                    if self.available_phases:
+                        self.action_phase_map[action_code] = self.available_phases[action_code % len(self.available_phases)]
+                    else:
+                        self.action_phase_map[action_code] = 0
+
+            # print(f"  RL Agent {self.tls_id} Map: {self.action_phase_map}")
+
+        except Exception as e:
+            # print(f"  RL Agent {self.tls_id} Phase Detection Failed: {e}")
+            self.available_phases = [0, 2, 4, 6]
+            self.action_phase_map = {0:0, 1:2, 2:4, 3:6}
+
     def step(self, simulation_step: int) -> Dict:
         """
         Execute one decision cycle.
@@ -81,31 +178,44 @@ class RLAgent:
         self.queue_length = self._get_queue_length()
         
         # --- EMERGENCY VEHICLE LOGIC ---
-        has_emergency, emergency_phase = self._check_emergency()
+        has_emergency, emergency_phase_idx = self._check_emergency()
         
         if has_emergency:
-            # 🚑 Emergency Override: Force Green for the emergency lane immediately
-            # Bypass decision interval
-            if emergency_phase != self.current_phase:
-                # Need to switch
-                # If currently yellow, wait? Or force switch? 
-                # Standard safety says finish yellow, but for now we trust _set_yellow_phase to handle transition
+            # 🚑 Emergency Override
+            # Map the returned "logical" phase index to a real green phase if needed
+            # But _check_emergency currently returns 0/2/4/6.
+            # We need to map those to self.available_phases if possible, or just use them if they are valid.
+            # Actually, _check_emergency logic assumes standard grid.
+            # For robustness, we should try to find the BEST green phase for the lane.
+            # But for now, let's treat the index from _check_emergency as an Action Index (0..3)
+            # and map it to a physical phase using our new dynamic map.
+            
+            # Re-map standard direction indices (0=NS, 1=NSL, 2=EW, 3=EWL) to available phases
+            # This is a heuristic mapping
+            action_idx = 0
+            if emergency_phase_idx == self.PHASE_NS_GREEN: action_idx = 0
+            elif emergency_phase_idx == self.PHASE_NSL_GREEN: action_idx = 1
+            elif emergency_phase_idx == self.PHASE_EW_GREEN: action_idx = 2
+            elif emergency_phase_idx == self.PHASE_EWL_GREEN: action_idx = 3
+            
+            # Get actual physical phase using the semantic map
+            physical_phase = self.action_phase_map.get(action_idx, 0)
+
+            if physical_phase != self.current_phase:
                 if self.time_since_last_change >= self.yellow_duration:
                      self._set_yellow_phase(self.current_phase)
-                     self.current_phase = emergency_phase
+                     self.current_phase = physical_phase
                      self.metrics['phase_changes'] += 1
                      self.time_since_last_change = 0
             else:
-                 # Already in correct phase (or yellow going to it?)
-                 # Ensure we are green, not yellow
                  if self.time_since_last_change >= self.yellow_duration:
-                     self._set_green_phase(self.current_phase)
-                 
-            # print(f"  🚑 Emergency Override: Forcing Phase {emergency_phase}")
+                     self._set_green_phase_by_index(physical_phase) # Direct set
             
-            # Increment time but don't limit duration
             self.time_since_last_change += 1
             
+            # Get detailed lane queues
+            lane_queues = self.get_lane_queue_lengths()
+
             return {
                 'tls_id': self.tls_id,
                 'current_phase': int(self.current_phase),
@@ -113,7 +223,8 @@ class RLAgent:
                 'queue_length': int(self.queue_length),
                 'time_since_change': int(self.time_since_last_change),
                 'state': state.tolist(),
-                'emergency': True
+                'emergency': True,
+                'lane_queues': lane_queues
             }
         # -------------------------------
         
@@ -124,10 +235,13 @@ class RLAgent:
             # Choose action using trained model
             action = self._choose_action(state)
             
+            # Map Action to Physical Phase using semantic map
+            target_phase = self.action_phase_map.get(action, 0)
+            
             # Apply action (with yellow phase transition if needed)
-            if action != self.current_phase:
+            if target_phase != self.current_phase:
                 self._set_yellow_phase(self.current_phase)
-                self.current_phase = action
+                self.current_phase = target_phase
                 self.metrics['phase_changes'] += 1
                 
             self.time_since_last_change = 0
@@ -144,7 +258,7 @@ class RLAgent:
             # Continue current phase
             if self.time_since_last_change == self.yellow_duration:
                 # Yellow phase complete, activate green
-                self._set_green_phase(self.current_phase)
+                self._set_green_phase_by_index(self.current_phase)
         
         self.time_since_last_change += 1
         
@@ -152,13 +266,17 @@ class RLAgent:
         self.metrics['waiting_time'].append(self.avg_waiting_time)
         self.metrics['queue_length'].append(self.queue_length)
         
+        # Get detailed lane queues
+        lane_queues = self.get_lane_queue_lengths()
+
         return {
             'tls_id': self.tls_id,
             'current_phase': int(self.current_phase),
             'waiting_time': float(self.avg_waiting_time),
             'queue_length': int(self.queue_length),
             'time_since_change': int(self.time_since_last_change),
-            'state': state.tolist()
+            'state': state.tolist(),
+            'lane_queues': lane_queues
         }
 
     def _check_emergency(self) -> Tuple[bool, int]:
@@ -193,7 +311,12 @@ class RLAgent:
         """
         Choose action using trained RL model.
         """
-        q_values = self.model.predict_one(state)
+        # Reshape state for model input [1, input_dim]
+        state_batch = np.reshape(state, [1, self.num_states])
+        
+        # Use direct call instead of predict() to avoid TF retracing warning in loops
+        q_values = self.model.model(state_batch, training=False)[0]
+        
         action = np.argmax(q_values)
         return action
     
@@ -316,68 +439,70 @@ class RLAgent:
         except traci.exceptions.TraCIException:
             pass
     
-    def _get_queue_length(self) -> int:
+    def get_lane_queue_lengths(self) -> Dict[str, int]:
         """
-        Get total number of halted vehicles in incoming lanes.
+        Get queue length for each incoming lane.
         """
-        queue_length = 0
-        
+        queues = {}
         try:
             controlled_lanes = self.connection.trafficlight.getControlledLanes(self.tls_id)
             incoming_lanes = list(set(controlled_lanes))
             
             for lane in incoming_lanes:
-                queue_length += self.connection.lane.getLastStepHaltingNumber(lane)
+                queues[lane] = self.connection.lane.getLastStepHaltingNumber(lane)
         except traci.exceptions.TraCIException:
             pass
-        
+        return queues
+
+    def _get_queue_length(self) -> int:
+        """
+        Get total number of halted vehicles in incoming lanes.
+        """
+        queue_length = 0
+        try:
+            queues = self.get_lane_queue_lengths()
+            queue_length = sum(queues.values())
+        except traci.exceptions.TraCIException:
+            pass
         return queue_length
     
-    def _set_yellow_phase(self, old_action: int):
+    def _set_yellow_phase(self, old_phase: int):
         """
         Activate yellow phase for transition.
+        Assumes standard SUMO pattern: Green(i) -> Yellow(i+1)
         """
-        yellow_phase_code = old_action * 2 + 1
+        # Heuristic: try next phase index
+        yellow_phase = old_phase + 1
+        
         try:
-            # Check if phase exists
+            # Verify if valid
             max_phase = 0
             logics = self.connection.trafficlight.getAllProgramLogics(self.tls_id)
             if logics:
                 max_phase = len(logics[0].phases) - 1
             
-            if yellow_phase_code <= max_phase:
-                self.connection.trafficlight.setPhase(self.tls_id, yellow_phase_code)
+            if yellow_phase > max_phase:
+                yellow_phase = 0 # Wrap around or handled by green set? 
+                
+            self.connection.trafficlight.setPhase(self.tls_id, yellow_phase)
         except traci.exceptions.TraCIException:
             pass
     
-    def _set_green_phase(self, action: int):
+    def _set_green_phase_by_index(self, phase_index: int):
         """
-        Activate green phase.
+        Activate specific phase index directly.
         """
-        phase_map = {
-            0: self.PHASE_NS_GREEN,
-            1: self.PHASE_NSL_GREEN,
-            2: self.PHASE_EW_GREEN,
-            3: self.PHASE_EWL_GREEN
-        }
-        
-        target_phase = phase_map.get(action, 0)
-        
         try:
-            # Check if phase exists
-            max_phase = 0
-            logics = self.connection.trafficlight.getAllProgramLogics(self.tls_id)
-            if logics:
-                max_phase = len(logics[0].phases) - 1
-                
-            if target_phase <= max_phase:
-                self.connection.trafficlight.setPhase(self.tls_id, target_phase)
-            else:
-                 # Fallback: modulo or phase 0?
-                 self.connection.trafficlight.setPhase(self.tls_id, target_phase % (max_phase + 1))
-                 
+            self.connection.trafficlight.setPhase(self.tls_id, phase_index)
         except traci.exceptions.TraCIException:
             pass
+
+    def _set_green_phase(self, action: int):
+        """
+        Activate green phase based on Action Index (Legacy wrapper).
+        """
+        target = self.action_phase_map.get(action, 0)
+        self._set_green_phase_by_index(target)
     
     def get_metrics(self) -> Dict:
         """

@@ -1,0 +1,5 @@
+<additional>
+    <vType id="emergency" vClass="emergency" guiShape="emergency" color="red" accel="2.0" decel="6.0" length="6.0" minGap="2.5" maxSpeed="35" speedFactor="1.5" sigma="0.0">
+        <param key="has.siren" value="true"/>
+    </vType>
+</additional>

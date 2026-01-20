@@ -1,6 +1,0 @@
-Error: On processing option '--tls.all-ways':
- No option with the name 'tls.all-ways' exists.
-Error: The parameter 'true' is not allowed in this context.
- Switch or parameter name expected.
-Error: Could not parse commandline options.
-Quitting (on error).

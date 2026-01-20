@@ -1,12 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/sumoConfiguration.xsd">
     <input>
-        <net-file value="bangalore_silk_board.net.xml"/>
+        <net-file value="bangalore_hebbal.net.xml"/>
         <route-files value="routes.rou.xml"/>
-        <additional-files value="emergency.add.xml"/>
     </input>
     <time>
         <begin value="0"/>
-        <end value="5400"/>
+        <end value="3600"/>
+        <step-length value="1.0"/>
     </time>
+    <processing>
+        <time-to-teleport value="-1"/>
+    </processing>
+    <report>
+        <verbose value="true"/>
+        <no-step-log value="false"/>
+    </report>
 </configuration>

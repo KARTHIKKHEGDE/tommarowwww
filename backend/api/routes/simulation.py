@@ -47,8 +47,8 @@ async def initialize_simulation(config: SimulationConfig):
         scenario_paths = {
             "single": os.path.join(project_root, "intersection"),
             "grid": os.path.join(project_root, "backend", "sumo", "networks", "grid_network"),
-            "bangalore_silk_board": os.path.join(project_root, "backend", "sumo", "networks", "bangalore_silk_board"),
-            "bangalore_hosmat": os.path.join(project_root, "backend", "sumo", "networks", "bangalore_hosmat")
+            "bangalore_hosmat": os.path.join(project_root, "backend", "sumo", "networks", "bangalore_hosmat"),
+            "bangalore_hebbal": os.path.join(project_root, "backend", "sumo", "networks", "bangalore_hebbal")
         }
         
         network_path = scenario_paths.get(config.scenario)

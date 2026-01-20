@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<connections xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/connections_file.xsd">
+    <!-- N incoming -->
+    <connection from="N2C" to="C2E" fromLane="1" toLane="1"/> <!-- Left -->
+    <connection from="N2C" to="C2S" fromLane="0" toLane="0"/> <!-- Straight -->
+    <connection from="N2C" to="C2W" fromLane="0" toLane="0"/> <!-- Right -->
+
+    <!-- S incoming -->
+    <connection from="S2C" to="C2W" fromLane="1" toLane="1"/> <!-- Left -->
+    <connection from="S2C" to="C2N" fromLane="0" toLane="0"/> <!-- Straight -->
+    <connection from="S2C" to="C2E" fromLane="0" toLane="0"/> <!-- Right -->
+
+    <!-- E incoming -->
+    <connection from="E2C" to="C2S" fromLane="1" toLane="1"/> <!-- Left -->
+    <connection from="E2C" to="C2W" fromLane="0" toLane="0"/> <!-- Straight -->
+    <connection from="E2C" to="C2N" fromLane="0" toLane="0"/> <!-- Right -->
+
+    <!-- W incoming -->
+    <connection from="W2C" to="C2N" fromLane="1" toLane="1"/> <!-- Left -->
+    <connection from="W2C" to="C2E" fromLane="0" toLane="0"/> <!-- Straight -->
+    <connection from="W2C" to="C2S" fromLane="0" toLane="0"/> <!-- Right -->
+</connections>

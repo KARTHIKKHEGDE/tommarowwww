@@ -123,7 +123,7 @@ const ScenarioSelection = () => {
                         </button>
                     </div>
                 ) : (
-                    <div className="flex-1 grid grid-cols-2 gap-6 min-h-0">
+                    <div className="flex-1 grid grid-cols-2 gap-6 min-h-0 overflow-y-auto pr-4 pb-6 scrollbar-thin scrollbar-thumb-cyan-900 scrollbar-track-transparent">
                         {scenarios.map((scenario) => (
                             <motion.div
                                 key={scenario.id}
