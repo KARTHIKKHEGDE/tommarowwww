@@ -3,6 +3,7 @@
     <input>
         <net-file value="environment.net.xml"/>
         <route-files value="episode_routes_fixed.rou.xml"/>
+
     </input>
     <time>
         <begin value="0"/>
@@ -10,7 +11,7 @@
         <step-length value="1.0"/>
     </time>
     <processing>
-        <time-to-teleport value="-1"/>
+        <time-to-teleport value="120"/>
         <waiting-time-memory value="10000"/>
         <collision.action value="none"/>
     </processing>

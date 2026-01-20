@@ -54,6 +54,10 @@ class DualSimulationManager:
         self.gui = gui
         self.seed = seed
         
+        self.active_rl_agents = []
+        self.active_fixed_agents = []
+        self.is_running = False
+        
         # Safer Scenario Detection - User Suggested
         network_name = os.path.basename(self.network_path.lower())
         if "hosmat" in network_name:
@@ -269,6 +273,26 @@ class DualSimulationManager:
 
         print("✓ Simulation manager configured (Dual Density Activated for supported maps)")
         
+        # Pre-extract TLS IDs for frontend standby display
+        self.initialized_tls_ids = self.get_tls_ids_from_net()
+
+    def get_tls_ids_from_net(self) -> List[str]:
+        """Parse .net.xml to find all traffic light IDs before starting SUMO"""
+        try:
+            import xml.etree.ElementTree as ET
+            net_files = [f for f in os.listdir(self.network_path) if f.endswith('.net.xml')]
+            if not net_files: return []
+            
+            # Special case for hosmat if needed
+            net_file = "hosmat.net.xml" if self.scenario_id == "hosmat" else net_files[0]
+            
+            tree = ET.parse(os.path.join(self.network_path, net_file))
+            root = tree.getroot()
+            # Only get unique IDs
+            return sorted(list(set([tls.get('id') for tls in root.findall('tlLogic')])))
+        except Exception as e:
+            print(f"Error parsing net file for TLS IDs: {e}")
+            return []
     
     def run_simulation(self, strategy: str = "both") -> Dict:
         """
@@ -319,8 +343,10 @@ class DualSimulationManager:
                 print(f"  Found {len(tls_ids)} traffic lights")
                 
                 # 2. Instantiate Controllers
-                rl_agents = []
-                fixed_agents = []
+                self.active_rl_agents = []
+                self.active_fixed_agents = []
+                rl_agents = self.active_rl_agents
+                fixed_agents = self.active_fixed_agents
                 
                 for tls_id in tls_ids:
                     # Determine which agent to use for the "RL" window
@@ -418,7 +444,9 @@ class DualSimulationManager:
                         'controller': 'both',
                         'rl_metrics': rl_step_metrics,
                         'fixed_metrics': fixed_step_metrics,
-                        'rl_details': rl_details
+                        'rl_details': rl_details,
+                        'scenario_id': self.scenario_id,
+                        'scenario_mode': self.scenario_mode
                     })
                     
                     step += 1
@@ -484,7 +512,6 @@ class DualSimulationManager:
             
             tls_ids = conn.trafficlight.getIDList()
             controllers = []
-            
             for tls_id in tls_ids:
                 if name == "RL":
                     controllers.append(RLAgent(
@@ -502,6 +529,11 @@ class DualSimulationManager:
                         yellow_duration=self.yellow_duration
                     ))
             
+            if name == "RL":
+                self.active_rl_agents = controllers
+            else:
+                self.active_fixed_agents = controllers
+                
             print(f"  Simulating {name}...")
             step = 0
             start_time = time.time()
@@ -680,3 +712,18 @@ class DualSimulationManager:
         # Try standard close as fallback
         try: traci.close() 
         except: pass
+    def get_agent_decisions(self) -> List[Dict]:
+        """
+        Get decision logs from all RL agents.
+        """
+        all_logs = []
+        for agent in self.active_rl_agents:
+            if hasattr(agent, 'metrics') and 'decisions' in agent.metrics:
+                for dec in agent.metrics['decisions']:
+                    # Add TLS ID to each decision for context
+                    log_entry = dec.copy()
+                    log_entry['tls_id'] = agent.tls_id
+                    all_logs.append(log_entry)
+        
+        # Sort by step descending
+        return sorted(all_logs, key=lambda x: x['step'], reverse=True)

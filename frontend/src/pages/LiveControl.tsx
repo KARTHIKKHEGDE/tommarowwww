@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Activity, Power, Cpu, Server, Wifi, AlertTriangle, Play, Terminal, Shield } from 'lucide-react';
+import { Activity, Power, Cpu, Server, Wifi, AlertTriangle, Play, Terminal } from 'lucide-react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -10,6 +10,7 @@ interface AgentState {
     current_phase: number;
     queue_length: number;
     time_since_change: number;
+    throughput?: number;
     emergency?: boolean;
     lane_queues?: Record<string, number>;
 }
@@ -28,6 +29,8 @@ interface SimulationState {
         throughput: number;
     };
     rl_details?: AgentState[];
+    scenario_id?: string;
+    scenario_mode?: string;
 }
 
 // --- Components ---
@@ -113,9 +116,8 @@ const AINode = ({ agent }: { agent: AgentState }) => {
             <div className="grid grid-cols-[auto_1fr] gap-8 items-center z-10">
                 <PhaseRing phase={agent.current_phase} timer={agent.time_since_change} />
                 <div className="grid grid-cols-2 gap-x-6 gap-y-4">
-                    <DigitalText value={agent.queue_length} label="Current_Queue" color={agent.queue_length > 15 ? "text-[#ffaa00]" : "text-white"} />
-                    <DigitalText value={agent.current_phase} label="Active_Phase" color="text-cyan-400" />
-                    <DigitalText value={(agent.time_since_change * 1.8).toFixed(0)} label="Flow_Rate" color="text-[#00ff9c]" />
+                    <DigitalText value={(agent.current_phase || 0)} label="Active_Phase" color="text-cyan-400" />
+                    <DigitalText value={typeof agent.throughput === 'number' && !isNaN(agent.throughput) ? agent.throughput : Math.round((agent.time_since_change || 0) * 1.8)} label="Flow_Rate" color="text-[#00ff9c]" />
                     <DigitalText value={isEmergency ? "ALERT" : "STABLE"} label="Sys_State" color={isEmergency ? "text-[#ff004c]" : "text-emerald-500/50"} />
                 </div>
             </div>
@@ -152,6 +154,25 @@ const LiveControl = () => {
     const wsRef = useRef<WebSocket | null>(null);
 
     useEffect(() => {
+        // Pre-populate with initialized IDs from Scenario Selection
+        const storedIds = localStorage.getItem('active_tls_ids');
+        if (storedIds) {
+            try {
+                const ids = JSON.parse(storedIds);
+                setStatus(prev => ({
+                    ...prev,
+                    rl_details: ids.map((id: string) => ({
+                        tls_id: id,
+                        current_phase: 0,
+                        queue_length: 0,
+                        time_since_change: 0
+                    }))
+                }));
+            } catch (e) {
+                console.error("Failed to parse stored TLS IDs", e);
+            }
+        }
+
         const ws = new WebSocket('ws://localhost:8000/ws/simulation');
         ws.onopen = () => console.log('Uplink Established');
         ws.onmessage = (event) => {
@@ -196,6 +217,30 @@ const LiveControl = () => {
                 </div>
 
                 <div className="flex items-center gap-6">
+                    <div
+                        onClick={() => navigate('/analytics')}
+                        className="flex items-center gap-4 px-5 py-1.5 border border-[#00ff9c]/30 hover:border-[#00ff9c] hover:bg-[#00ff9c]/5 cursor-pointer transition-all group relative overflow-hidden"
+                    >
+                        <div className="absolute top-0 left-0 w-1 h-full bg-[#00ff9c] opacity-20 group-hover:opacity-100 transition-opacity" />
+                        <Activity className="w-4 h-4 text-[#00ff9c] animate-pulse" />
+                        <div className="flex flex-col">
+                            <span className="text-[8px] text-white/40 font-bold uppercase tracking-[0.2em] leading-none">Deep_Analytics</span>
+                            <span className="text-[11px] text-[#00ff9c] font-black uppercase tracking-[0.1em] leading-none mt-1">Open_Stream</span>
+                        </div>
+                    </div>
+
+                    <div
+                        onClick={() => navigate('/decisions')}
+                        className="flex items-center gap-4 px-5 py-1.5 border border-cyan-500/30 hover:border-cyan-500 hover:bg-cyan-500/5 cursor-pointer transition-all group relative overflow-hidden"
+                    >
+                        <div className="absolute top-0 left-0 w-1 h-full bg-cyan-500 opacity-20 group-hover:opacity-100 transition-opacity" />
+                        <Terminal className="w-4 h-4 text-cyan-500" />
+                        <div className="flex flex-col">
+                            <span className="text-[8px] text-white/40 font-bold uppercase tracking-[0.2em] leading-none">Agent_Logs</span>
+                            <span className="text-[11px] text-cyan-500 font-black uppercase tracking-[0.1em] leading-none mt-1">Decision_Core</span>
+                        </div>
+                    </div>
+
                     <div className={`flex items-center gap-3 px-4 py-1.5 border-2 ${status.isRunning ? 'border-[#00ff9c] text-[#00ff9c]' : 'border-[#ffaa00] text-[#ffaa00]'} text-[10px] font-black tracking-[0.3em] uppercase`}>
                         <div className={`w-2.5 h-2.5 rounded-full ${status.isRunning ? 'bg-[#00ff9c] animate-pulse shadow-[0_0_10px_#00ff9c]' : 'bg-[#ffaa00]'}`} />
                         {status.isRunning ? 'CORE_ACTIVE' : 'CORE_STANDBY'}
@@ -219,7 +264,16 @@ const LiveControl = () => {
                         <div className="space-y-2">
                             <div className="text-[9px] text-white/30 uppercase tracking-[0.3em] font-bold">ACTIVE_PROTOCOL</div>
                             <div className="bg-black border border-white/5 p-4 relative group hover:border-cyan-500/30 transition-all">
-                                <div className="text-white font-black text-sm tracking-widest">HOSMAT_GRID_STRESS</div>
+                                <div className="text-white font-black text-sm tracking-widest uppercase">
+                                    {status.scenario_id ? (
+                                        status.scenario_id === 'hosmat' ? 'HOSMAT_GRID_STRESS' :
+                                            status.scenario_id === 'hebbal' ? 'HEBBAL_INTERCHANGE_FLOW' :
+                                                status.scenario_id === 'grid' ? 'URBAN_MESH_CONTROL' :
+                                                    status.scenario_id === 'single' ? 'ISOLATED_NODE_TEST' :
+                                                        status.scenario_id === 'jss' ? 'JSS_URBAN_CORE' :
+                                                            `${status.scenario_id.toUpperCase()}_PROTOCOL`
+                                    ) : 'INITIALIZING_SESSION...'}
+                                </div>
                                 <div className="absolute top-2 right-2 flex gap-1">
                                     <div className="w-1.5 h-1.5 bg-[#00ff9c]/40 rounded-full" />
                                     <div className="w-1.5 h-1.5 bg-[#ffaa00]/40 rounded-full" />
@@ -236,15 +290,6 @@ const LiveControl = () => {
                                 <Play className="w-5 h-5" /> INIT_DEPLOY
                             </button>
                         )}
-                    </div>
-
-                    <div className="bg-black/40 border border-white/5 p-5 relative group hover:border-[#00ff9c]/40 transition-all cursor-pointer" onClick={() => navigate('/analytics')}>
-                        <div className="text-[9px] text-white/30 uppercase tracking-[0.4em] mb-2 font-bold italic">Deep_Analytics</div>
-                        <div className="text-[#00ff9c] font-black text-xs uppercase tracking-[0.3em] flex items-center justify-between">
-                            <span>Open_Stream</span>
-                            <Activity className="w-5 h-5" />
-                        </div>
-                        <div className="absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 border-[#00ff9c]/20 group-hover:border-[#00ff9c] transition-colors" />
                     </div>
 
                     <div className="mt-auto pt-6 border-t border-white/5 space-y-4">
@@ -265,47 +310,17 @@ const LiveControl = () => {
 
                 {/* 3. MAIN CORE GRID */}
                 <main className="flex-1 overflow-auto relative p-10">
-                    {/* Standby State Overlay */}
-                    {!status.isRunning && (
-                        <div className="absolute inset-0 flex items-center justify-center z-20 backdrop-blur-[4px]">
-                            <div className="flex flex-col items-center max-w-lg w-full">
-                                <div className="relative mb-12">
-                                    <div className="w-48 h-48 border-2 border-cyan-500/20 rounded-full flex items-center justify-center animate-[spin_20s_linear_infinite]">
-                                        <div className="w-40 h-40 border border-cyan-500/40 rounded-full border-dashed" />
-                                    </div>
-                                    <div className="absolute inset-0 flex items-center justify-center">
-                                        <Shield className="w-20 h-20 text-cyan-500 opacity-20" />
-                                    </div>
-                                    <motion.div className="absolute top-0 -right-8 flex flex-col gap-1 text-[8px] text-cyan-500/40 font-black uppercase tracking-widest" animate={{ y: [0, 10, 0] }} transition={{ duration: 4, repeat: Infinity }}>
-                                        <span>SEC_LAYER_04</span>
-                                        <span>ENCRYPT_STABLE</span>
-                                    </motion.div>
-                                </div>
-                                <h1 className="text-5xl font-black text-white tracking-[0.6em] uppercase flex items-center gap-1">
-                                    CORE<span className="text-cyan-500 animate-pulse">_</span>STANDBY
-                                </h1>
-                                <p className="text-cyan-500/40 text-xs font-black mt-6 tracking-[0.8em] uppercase text-center leading-loose">
-                                    Waiting for simulation initialization sequence...<br />
-                                    Unauthorized access is strictly prohibited.
-                                </p>
-
-                                <div className="mt-12 w-full h-1 bg-white/5 relative overflow-hidden">
-                                    <motion.div className="h-full bg-cyan-500 w-1/3" animate={{ left: ["-100%", "200%"] }} transition={{ duration: 3, repeat: Infinity, ease: "linear" }} />
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Active Grid */}
+                    {/* Standby State Overlay - HUD Mode */}
+                    {/* Active Grid - Always Visible */}
                     <div className="max-w-[1700px] mx-auto z-10 relative">
                         <AnimatePresence>
-                            {status.isRunning && (
+                            {status.rl_details && status.rl_details.length > 0 && (
                                 <motion.div
                                     initial={{ opacity: 0 }}
                                     animate={{ opacity: 1 }}
                                     className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 3xl:grid-cols-4 gap-8 pb-20"
                                 >
-                                    {status.rl_details && status.rl_details.map((agent) => (
+                                    {status.rl_details.map((agent) => (
                                         <AINode key={agent.tls_id} agent={agent} />
                                     ))}
                                 </motion.div>

@@ -118,13 +118,18 @@ const ScenarioSelection = () => {
     const handleStartSimulation = async (id: string) => {
         setInitializing(true);
         try {
-            await axios.post('/api/simulation/initialize', {
+            const initRes = await axios.post('/api/simulation/initialize', {
                 scenario: id,
                 max_steps: 5400,
                 n_cars: 1000,
                 gui: true,
                 seed: 42
             });
+
+            if (initRes.data.tls_ids) {
+                localStorage.setItem('active_tls_ids', JSON.stringify(initRes.data.tls_ids));
+            }
+
             await axios.post('/api/simulation/start');
             navigate('/live');
         } catch (error) {

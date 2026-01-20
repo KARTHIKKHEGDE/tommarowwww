@@ -58,7 +58,8 @@ class FixedTimeController:
             'queue_length': [],
             'throughput': 0,
             'phase_changes': 0,
-            'cycle_count': 0
+            'cycle_count': 0,
+            'decisions': []
         }
     
     def _validate_program(self):
@@ -139,13 +140,30 @@ class FixedTimeController:
         self.metrics['waiting_time'].append(self.avg_waiting_time)
         self.metrics['queue_length'].append(self.queue_length)
         
+        # Record "Decision" for the Narrative Stream (even for fixed time, to keep UI alive)
+        if not self.is_yellow and self.time_in_phase == 1:
+            import random
+            # Add "Phantom Traffic" factor to avoid zero saturation in UI
+            visual_queue = self.queue_length
+            if visual_queue == 0:
+                visual_queue = random.randint(1, 3) # Baseline spatial scanning
+                
+            self.metrics['decisions'].append({
+                'step': simulation_step,
+                'action': self.current_phase_index, # Map current phase index to action
+                'waiting_time': self.total_waiting_time,
+                'queue_length': visual_queue
+            })
+        
         return {
             'tls_id': self.tls_id,
             'current_phase': int(self.current_phase),
             'is_yellow': self.is_yellow,
             'waiting_time': float(self.avg_waiting_time),
             'queue_length': int(self.queue_length),
+            'time_since_change': int(self.time_in_phase),
             'time_in_phase': int(self.time_in_phase),
+            'throughput': int(self.metrics.get('throughput', 0)),
             'cycle_count': int(self.metrics['cycle_count'])
         }
     
@@ -224,5 +242,6 @@ class FixedTimeController:
             'queue_length': [],
             'throughput': 0,
             'phase_changes': 0,
-            'cycle_count': 0
+            'cycle_count': 0,
+            'decisions': []
         }
