@@ -64,7 +64,7 @@ class DualSimulationManager:
         self.gui = gui
         self.seed = seed
         
-        self.emergency_interval = 30  # Configurable emergency interval
+        self.emergency_interval = 120  # Spawn one ambulance every 2 minutes (120 seconds)
         
         # SUMO configuration - Try to find SUMO binary
         self.sumo_binary = self._find_sumo_binary(gui)
@@ -90,6 +90,9 @@ class DualSimulationManager:
         
         # Real-time data queue for WebSocket streaming
         self.data_queue = queue.Queue()
+        
+        # Track spawned emergency vehicles to prevent duplicates
+        self.spawned_emergency_steps = set()
     
     def _find_sumo_binary(self, gui: bool) -> str:
         """
@@ -124,8 +127,20 @@ class DualSimulationManager:
     def _spawn_emergency_vehicle(self, step, conn_rl, conn_fixed):
         """
         Spawn an emergency vehicle in both simulations at the same random location.
+        Includes duplicate prevention to ensure only one spawn per interval.
         """
         import random
+        
+        # Prevent duplicate spawning at the same step
+        if step in self.spawned_emergency_steps:
+            print(f"  ⚠️  [Step {step}] Duplicate spawn prevented (already spawned at this step)")
+            return
+        
+        self.spawned_emergency_steps.add(step)
+        
+        # Calculate time in minutes for better readability
+        time_minutes = step / 60.0
+        
         try:
             # Pick a random route from available routes
             routes = conn_rl.route.getIDList()
@@ -137,25 +152,31 @@ class DualSimulationManager:
             route_id = random.choice(routes)
             veh_id = f"ambulance_{step}"
             
+            print(f"\n  🚑 [Step {step} | {time_minutes:.1f} min] Spawning Emergency Vehicle")
+            print(f"     Vehicle ID: {veh_id}")
+            print(f"     Route: {route_id}")
+            print(f"     Next spawn in: {self.emergency_interval} steps (2 minutes)")
+            
             # Spawn in RL simulation
             try:
                 conn_rl.vehicle.add(veh_id, route_id, typeID="emergency", departSpeed="max")
                 conn_rl.vehicle.setColor(veh_id, (255, 0, 0, 255))
-                # print(f"  🚑 Spawned Emergency Vehicle {veh_id} on route {route_id}")
+                print(f"     ✓ Spawned in RL simulation")
             except Exception as e:
-                # Type might not exist if using old config, fallback to standard
-                # print(f"Warning: Failed to spawn emergency in RL: {e}")
+                print(f"     ⚠️  Warning: Failed to spawn in RL: {e}")
                 pass
                 
             # Spawn in Fixed simulation
             try:
                 conn_fixed.vehicle.add(veh_id, route_id, typeID="emergency", departSpeed="max")
                 conn_fixed.vehicle.setColor(veh_id, (255, 0, 0, 255))
+                print(f"     ✓ Spawned in Fixed simulation")
             except Exception as e:
+                print(f"     ⚠️  Warning: Failed to spawn in Fixed: {e}")
                 pass
                 
         except Exception as e:
-            print(f"Error spawning emergency vehicle: {e}")
+            print(f"  ❌ Error spawning emergency vehicle: {e}")
 
     def initialize(self):
         """
@@ -206,6 +227,7 @@ class DualSimulationManager:
         # self.is_running will be set after successful start
         self.rl_metrics = []
         self.fixed_metrics = []
+        self.spawned_emergency_steps.clear()  # Reset emergency vehicle tracking
         
         # --- PARELLEL EXECUTION (Both Windows Simultaneously) ---
         if strategy == "both":
@@ -267,8 +289,8 @@ class DualSimulationManager:
                     conn_rl.simulationStep()
                     conn_fixed.simulationStep()
                     
-                    # Spawn Emergency Vehicle
-                    if step > 0 and step % self.emergency_interval == 0:
+                    # Spawn Emergency Vehicle (every 2 minutes, starting at step 120)
+                    if step >= self.emergency_interval and step % self.emergency_interval == 0:
                         self._spawn_emergency_vehicle(step, conn_rl, conn_fixed)
                     
                     # --- RL STEP ---

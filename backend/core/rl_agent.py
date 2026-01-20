@@ -59,6 +59,7 @@ class RLAgent:
         self.waiting_times = {}
         self.total_waiting_time = 0
         self.queue_length = 0
+        self.emergency_preemptions = 0  # Track emergency vehicle priority events
         
         # Performance metrics
         self.metrics = {
@@ -66,6 +67,7 @@ class RLAgent:
             'queue_length': [],
             'throughput': 0,
             'phase_changes': 0,
+            'emergency_preemptions': 0,
             'decisions': []
         }
 
@@ -177,21 +179,12 @@ class RLAgent:
         self._collect_waiting_times()
         self.queue_length = self._get_queue_length()
         
-        # --- EMERGENCY VEHICLE LOGIC ---
-        has_emergency, emergency_phase_idx = self._check_emergency()
+        # --- EMERGENCY VEHICLE PREEMPTION LOGIC ---
+        has_emergency, emergency_phase_idx, emergency_veh_id = self._check_emergency()
         
         if has_emergency:
-            # 🚑 Emergency Override
-            # Map the returned "logical" phase index to a real green phase if needed
-            # But _check_emergency currently returns 0/2/4/6.
-            # We need to map those to self.available_phases if possible, or just use them if they are valid.
-            # Actually, _check_emergency logic assumes standard grid.
-            # For robustness, we should try to find the BEST green phase for the lane.
-            # But for now, let's treat the index from _check_emergency as an Action Index (0..3)
-            # and map it to a physical phase using our new dynamic map.
-            
-            # Re-map standard direction indices (0=NS, 1=NSL, 2=EW, 3=EWL) to available phases
-            # This is a heuristic mapping
+            # 🚑 EMERGENCY OVERRIDE - Immediate Priority!
+            # Map emergency phase to action index
             action_idx = 0
             if emergency_phase_idx == self.PHASE_NS_GREEN: action_idx = 0
             elif emergency_phase_idx == self.PHASE_NSL_GREEN: action_idx = 1
@@ -201,17 +194,48 @@ class RLAgent:
             # Get actual physical phase using the semantic map
             physical_phase = self.action_phase_map.get(action_idx, 0)
 
-            if physical_phase != self.current_phase:
-                if self.time_since_last_change >= self.yellow_duration:
-                     self._set_yellow_phase(self.current_phase)
-                     self.current_phase = physical_phase
-                     self.metrics['phase_changes'] += 1
-                     self.time_since_last_change = 0
-            else:
-                 if self.time_since_last_change >= self.yellow_duration:
-                     self._set_green_phase_by_index(physical_phase) # Direct set
+            # Check if this is a NEW emergency (different vehicle)
+            is_new_emergency = (
+                not hasattr(self, '_current_emergency_veh') or 
+                self._current_emergency_veh != emergency_veh_id
+            )
             
-            self.time_since_last_change += 1
+            if is_new_emergency:
+                # NEW EMERGENCY DETECTED!
+                print(f"  🚨 [TLS {self.tls_id}] EMERGENCY PREEMPTION!")
+                print(f"     Vehicle: {emergency_veh_id}")
+                print(f"     Current phase: {self.current_phase}, Required phase: {physical_phase}")
+                
+                self._current_emergency_veh = emergency_veh_id
+                self._emergency_target_phase = physical_phase
+                self._emergency_timer = 0
+                self.emergency_preemptions += 1
+                self.metrics['emergency_preemptions'] += 1
+                
+                # If phase change needed, start yellow transition
+                if physical_phase != self.current_phase:
+                    self._set_yellow_phase(self.current_phase)
+                    self.metrics['phase_changes'] += 1
+                    print(f"     Switching from phase {self.current_phase} → {physical_phase}")
+                    print(f"     Total preemptions: {self.emergency_preemptions}")
+                else:
+                    print(f"     Already on correct phase {physical_phase}")
+                    print(f"     Total preemptions: {self.emergency_preemptions}")
+            
+            # Handle ongoing emergency
+            if hasattr(self, '_emergency_target_phase'):
+                target = self._emergency_target_phase
+                
+                # Increment timer
+                self._emergency_timer += 1
+                
+                # After yellow duration, switch to green and update current phase
+                if self._emergency_timer >= self.yellow_duration and self.current_phase != target:
+                    self.current_phase = target
+                    self._set_green_phase_by_index(target)
+                elif self.current_phase == target:
+                    # Ensure green is active
+                    self._set_green_phase_by_index(target)
             
             # Get detailed lane queues
             lane_queues = self.get_lane_queue_lengths()
@@ -224,8 +248,15 @@ class RLAgent:
                 'time_since_change': int(self.time_since_last_change),
                 'state': state.tolist(),
                 'emergency': True,
+                'emergency_preemptions': int(self.emergency_preemptions),
                 'lane_queues': lane_queues
             }
+        else:
+            # No emergency - reset tracking
+            if hasattr(self, '_current_emergency_veh'):
+                self._current_emergency_veh = None
+                self._emergency_target_phase = None
+                self._emergency_timer = 0
         # -------------------------------
         
         # Make decision every green_duration + yellow_duration seconds
@@ -276,36 +307,104 @@ class RLAgent:
             'queue_length': int(self.queue_length),
             'time_since_change': int(self.time_since_last_change),
             'state': state.tolist(),
+            'emergency': False,
+            'emergency_preemptions': int(self.emergency_preemptions),
             'lane_queues': lane_queues
         }
 
-    def _check_emergency(self) -> Tuple[bool, int]:
+    def _check_emergency(self) -> Tuple[bool, int, str]:
         """
-        Check for emergency vehicles in incoming lanes and return the required phase.
-        Returns: (has_emergency, target_phase)
+        Check for emergency vehicles approaching or in incoming lanes.
+        Uses 3-tier detection system:
+        - 500m: Early warning (logging only)
+        - 200m: Phase reservation (prepare to switch)
+        - 100m: Immediate preemption (switch now)
+        Returns: (has_emergency, target_phase, vehicle_id)
         """
+        # Initialize tracking sets if not exists
+        if not hasattr(self, '_logged_ambulances'):
+            self._logged_ambulances = set()
+        if not hasattr(self, '_warned_ambulances'):
+            self._warned_ambulances = set()
+        if not hasattr(self, '_reserved_ambulances'):
+            self._reserved_ambulances = set()
+            
         try:
             controlled_lanes = self.connection.trafficlight.getControlledLanes(self.tls_id)
             incoming_lanes = list(set(controlled_lanes))
             
+            # 3-Tier Detection Ranges
+            EARLY_WARNING_RANGE = 500.0   # Early detection - log only
+            RESERVATION_RANGE = 200.0      # Start preparing phase
+            PREEMPTION_RANGE = 100.0       # Immediate switch
+            
             for lane_id in incoming_lanes:
                 vehicles = self.connection.lane.getLastStepVehicleIDs(lane_id)
+                lane_length = self.connection.lane.getLength(lane_id)
+                
                 for veh_id in vehicles:
                     v_type = self.connection.vehicle.getTypeID(veh_id)
                     if "emergency" in v_type:
-                        # Found emergency vehicle!
-                        # Determine required phase
+                        # Check distance to intersection
+                        lane_pos = self.connection.vehicle.getLanePosition(veh_id)
+                        dist_to_intersection = lane_length - lane_pos
+                        
+                        # Determine required phase based on lane direction
                         lane_group = self._get_lane_group(lane_id)
                         
-                        if lane_group in [2, 6]: return True, self.PHASE_NS_GREEN
-                        if lane_group in [3, 7]: return True, self.PHASE_NSL_GREEN
-                        if lane_group in [0, 4]: return True, self.PHASE_EW_GREEN
-                        if lane_group in [1, 5]: return True, self.PHASE_EWL_GREEN
+                        phase_name = "Unknown"
+                        target_phase = -1
+                        
+                        if lane_group in [2, 6]: 
+                            target_phase = self.PHASE_NS_GREEN
+                            phase_name = "NS Green"
+                        elif lane_group in [3, 7]: 
+                            target_phase = self.PHASE_NSL_GREEN
+                            phase_name = "NS Left"
+                        elif lane_group in [0, 4]: 
+                            target_phase = self.PHASE_EW_GREEN
+                            phase_name = "EW Green"
+                        elif lane_group in [1, 5]: 
+                            target_phase = self.PHASE_EWL_GREEN
+                            phase_name = "EW Left"
+                        
+                        if target_phase == -1:
+                            continue
+                        
+                        # TIER 1: Early Warning (500m)
+                        if dist_to_intersection <= EARLY_WARNING_RANGE and veh_id not in self._warned_ambulances:
+                            print(f"  ⚠️  [TLS {self.tls_id}] Early warning: Emergency vehicle approaching")
+                            print(f"     Vehicle: {veh_id}")
+                            print(f"     Distance: {dist_to_intersection:.1f}m")
+                            print(f"     ETA: ~{int(dist_to_intersection / 11):.0f}s (at 40 km/h)")
+                            print(f"     Will need: {phase_name} (Phase {target_phase})")
+                            self._warned_ambulances.add(veh_id)
+                        
+                        # TIER 2: Phase Reservation (200m)
+                        if dist_to_intersection <= RESERVATION_RANGE and veh_id not in self._reserved_ambulances:
+                            print(f"  🔔 [TLS {self.tls_id}] Phase reservation: Preparing for emergency")
+                            print(f"     Vehicle: {veh_id}")
+                            print(f"     Distance: {dist_to_intersection:.1f}m")
+                            print(f"     Reserving: {phase_name} (Phase {target_phase})")
+                            self._reserved_ambulances.add(veh_id)
+                        
+                        # TIER 3: Immediate Preemption (100m)
+                        if dist_to_intersection <= PREEMPTION_RANGE:
+                            # Only log once per ambulance at preemption range
+                            if veh_id not in self._logged_ambulances:
+                                print(f"  🚑 [TLS {self.tls_id}] Emergency vehicle detected!")
+                                print(f"     Vehicle: {veh_id}")
+                                print(f"     Lane: {lane_id}")
+                                print(f"     Distance: {dist_to_intersection:.1f}m")
+                                print(f"     Required phase: {phase_name} (Phase {target_phase})")
+                                self._logged_ambulances.add(veh_id)
+                            
+                            return True, target_phase, veh_id
                         
         except Exception:
             pass
             
-        return False, -1
+        return False, -1, ""
     
     def _choose_action(self, state: np.ndarray) -> int:
         """
@@ -525,10 +624,18 @@ class RLAgent:
         self.waiting_times = {}
         self.total_waiting_time = 0
         self.queue_length = 0
+        self.emergency_preemptions = 0
+        self._current_emergency_veh = None
+        self._emergency_target_phase = None
+        self._emergency_timer = 0
+        self._logged_ambulances = set()
+        self._warned_ambulances = set()
+        self._reserved_ambulances = set()
         self.metrics = {
             'waiting_time': [],
             'queue_length': [],
             'throughput': 0,
             'phase_changes': 0,
+            'emergency_preemptions': 0,
             'decisions': []
         }

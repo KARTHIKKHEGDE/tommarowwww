@@ -25,7 +25,7 @@ class SimulationConfig(BaseModel):
     n_cars: int = 1000
     gui: bool = False
     seed: int = 42
-    emergency_interval: int = 30
+    emergency_interval: int = 120  # Spawn one ambulance every 2 minutes (120 seconds)
 
 
 class SimulationControl(BaseModel):
