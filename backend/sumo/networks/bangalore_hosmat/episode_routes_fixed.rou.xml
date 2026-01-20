@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<!-- generated on 2026-01-21 01:47:35.894231 by randomTrips.py v1_18_0+0000-03ecfdea036
+<!-- generated on 2026-01-21 02:08:16.851513 by randomTrips.py v1_18_0+0000-03ecfdea036
 <configuration>
     <net-file value="C:\Users\91948\OneDrive\Desktop\latest\backend\sumo\networks\bangalore_hosmat\hosmat.net.xml"/>
     <route-file value="C:\Users\91948\OneDrive\Desktop\latest\backend\sumo\networks\bangalore_hosmat\episode_routes_fixed.rou.xml"/>
@@ -10,7 +10,7 @@
 </configuration>
 -->
 
-<!-- generated on 2026-01-21 01:47:35 by Eclipse SUMO duarouter Version 1.18.0
+<!-- generated on 2026-01-21 02:08:16 by Eclipse SUMO duarouter Version 1.18.0
 <configuration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/duarouterConfiguration.xsd">
 
     <input>
