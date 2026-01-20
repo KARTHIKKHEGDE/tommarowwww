@@ -27,6 +27,7 @@ interface AnalyticsData {
         rl_avg_wait: number;
         fixed_avg_wait: number;
     };
+    generated_at?: number;
 }
 
 // --- Reusable Complex Chart Component ---
@@ -165,17 +166,27 @@ const DeepAnalytics = () => {
 
             setFullData(data);
 
-            // Initialize display data with empty arrays but correct structure
-            setDisplayData({
-                ...data,
-                time_points: [],
-                metrics: {
-                    waiting_time: { fixed: [], rl: [], improvement: [] },
-                    queue_length: { fixed: [], rl: [], improvement: [] },
-                    throughput: { fixed: [], rl: [], improvement: [] },
-                    efficiency: { fixed: [], rl: [], improvement: [] }
-                }
-            });
+            // Calculate current playback position based on server timestamp
+            // This ensures we resume exactly where we left off (or where the sim is "now")
+            let initialIndex = 0;
+            if (data.generated_at) {
+                const elapsedMs = Date.now() - data.generated_at;
+                // Step length is 0.5s (500ms)
+                initialIndex = Math.floor(elapsedMs / 500);
+
+                // Clamp to data bounds
+                if (initialIndex < 0) initialIndex = 0;
+                if (initialIndex >= data.time_points.length) initialIndex = data.time_points.length - 1;
+            }
+
+            setPlaybackIndex(initialIndex);
+
+            // Initialize display data to correct slice
+            // We need to trigger the useEffect logic immediately or set it here
+            // Setting state here is safer to avoid flickers
+
+            // ... (The useEffect [playbackIndex, fullData] will handle the slicing automatically 
+            // once playbackIndex and fullData are set)
 
             setLoading(false);
             setIsSimulating(true);
@@ -206,6 +217,30 @@ const DeepAnalytics = () => {
 
         return () => clearInterval(interval);
     }, [isSimulating, fullData]);
+
+    // Status Polling Loop - Detects if user closed SUMO or stopped simulation
+    useEffect(() => {
+        if (!isSimulating) return;
+
+        const pollStatus = async () => {
+            try {
+                const res = await axios.get('/api/simulation/status');
+                if (!res.data.running) {
+                    // Simulation stopped externally!
+                    setIsSimulating(false);
+                    // Optionally clear display to show "Session Ended"
+                    setDisplayData(null);
+                    setFullData(null);
+                    // Navigate back or show message? User asked to "stop showing"
+                }
+            } catch (e) {
+                console.error("Status poll failed", e);
+            }
+        };
+
+        const statusInterval = setInterval(pollStatus, 2000); // Check every 2s
+        return () => clearInterval(statusInterval);
+    }, [isSimulating]);
 
     // Update Display Data when index changes
     useEffect(() => {

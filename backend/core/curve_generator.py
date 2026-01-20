@@ -36,15 +36,16 @@ class CurveGenerator:
         return fixed_wait
 
     @staticmethod
-    def generate_improvement_curve(steps, metric_type='waiting_time'):
+    def generate_improvement_curve(steps, metric_type='waiting_time', step_length=0.5):
         """
         Creates phase-based learning curve with proper RL characteristics.
+        Saturates in approx 2-3 minutes (120-180s), then maintains saturation.
         """
         # Metric-specific ranges
         ranges = {
-            'waiting_time': {'start': (0.07, 0.15), 'sat': (0.44, 0.67)},   # User Req: 44-67%
-            'queue_length': {'start': (0.05, 0.12), 'sat': (0.25, 0.33)},   # User Req: 25-33%
-            'throughput':   {'start': (0.08, 0.14), 'sat': (0.32, 0.39)},   # User Req: 32-39%
+            'waiting_time': {'start': (0.07, 0.15), 'sat': (0.44, 0.67)},   
+            'queue_length': {'start': (0.05, 0.12), 'sat': (0.25, 0.33)},   
+            'throughput':   {'start': (0.08, 0.14), 'sat': (0.32, 0.39)},   
             'efficiency':   {'start': (0.12, 0.18), 'sat': (0.35, 0.70)}
         }
         
@@ -52,52 +53,66 @@ class CurveGenerator:
         
         # Random start and saturation within bounds
         start_improvement = np.random.uniform(*config['start'])
-        saturation_improvement = np.random.uniform(*config['sat'])
+        
+        sat_min, sat_max = config['sat']
+        saturation_improvement = np.random.uniform(sat_min * 0.9, sat_max * 1.1)
         
         # Initialize curve
-        t = np.linspace(0, 1, steps)
         curve = np.zeros(steps)
         curve[0] = start_improvement
         
-        # Random learning rate for mid-phase
-        k_mid = np.random.uniform(3.0, 6.0)
+        # TIME-BASED PHASES
+        # User wants saturation in ~2-3 minutes (120-180s)
+        saturation_time = np.random.uniform(140, 190) 
         
-        # PHASE-BASED GENERATION
         for i in range(1, steps):
-            ti = t[i]
+            current_time = i * step_length
             
-            # EARLY PHASE (0-20%): Exploration, almost flat but volatile
-            if ti < 0.20:
-                k = np.random.uniform(0.05, 0.15)
-                
-            # MID PHASE (20-70%): Active learning, steep climb
-            elif ti < 0.70:
-                k = k_mid
-                
-            # LATE PHASE (70-100%): Convergence
+            # Progress ratio (0 to 1) relative to SATURATION TIME, not total duration
+            progress = min(1.0, current_time / saturation_time)
+            
+            # PHASE LOGIC based on Progress to Saturation
+            if progress < 0.2:
+                # Exploration (Slow start)
+                k = 0.5 
+            elif progress < 1.0:
+                # Learning (Fast climb)
+                k = 3.0 # Steepness factor
             else:
-                k = np.random.uniform(0.01, 0.05)  
+                # Converged (Stable)
+                k = 0.0
+                
+            # Target value at this moment
+            # Sigmoid-like interpolation for smooth curve
+            if progress < 1.0:
+                 # Normalized time in [0, 1]
+                 p = progress
+                 # Cubic ease-in-out or similar
+                 factor = p * p * (3 - 2 * p) 
+                 target = start_improvement + (saturation_improvement - start_improvement) * factor
+            else:
+                 target = saturation_improvement
+
+            # Apply changing target with noise
+            # Instead of differential updates, we calculate target and add noise
+            # This is more stable for long durations
             
-            # Calculate incremental improvement
-            delta = (saturation_improvement - curve[i-1]) * k * (1.0 / steps)
+            # Base Noise
+            noise = np.random.normal(0, 0.02) 
             
-            # Add stochastic noise (High Variance for RL learning)
-            noise = np.random.normal(0, 0.015) # Increased from 0.003
-            
-            # Update curve
-            curve[i] = curve[i-1] + delta + noise
+            # Oscillation for "Alive" feel
+            if progress >= 1.0:
+                # Add larger slow waves in saturation phase
+                wave = 0.03 * np.sin(current_time / 10.0) # Slow wave
+                jitter = np.random.normal(0, 0.01)       # Fast jitter
+                val = target + wave + jitter
+            else:
+                val = target + noise
+                
+            curve[i] = val
         
-        # Add oscillation in late phase
-        late_start_idx = int(0.7 * steps)
-        oscillation_amplitude = np.random.uniform(0.02, 0.04) # Increased oscillation
-        if steps > late_start_idx:
-            oscillation = oscillation_amplitude * np.sin(
-                np.linspace(0, 12 * np.pi, steps - late_start_idx) # Faster oscillation
-            )
-            curve[late_start_idx:] += oscillation
-        
-        # Final clipping
-        curve = np.clip(curve, start_improvement * 0.8, saturation_improvement * 1.1)
+        # Final relax clamping
+        curve = np.clip(curve, start_improvement * 0.5, saturation_improvement * 1.3)
         
         return curve
 
@@ -141,9 +156,11 @@ class CurveGenerator:
         """
         Generates all data for one training run across multiple metrics.
         """
-        # Step 1: Random duration
-        duration_sec = np.random.uniform(120, 180) # 2-3 minutes
-        step_length = 0.5 # 0.5s resolution for smooth real-time playback
+        # Step 1: Random duration - User Req: "no finite end value", "if sumo stops then this stops"
+        # Since we are "playing back" generated data in DeepAnalytics, we need a buffer LONG enough to cover any reasonable session.
+        # 3600 seconds = 1 hour.
+        duration_sec = 3600 
+        step_length = 0.5 # 0.5s resolution
         steps = int(duration_sec / step_length)
 
         

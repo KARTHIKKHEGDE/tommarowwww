@@ -48,7 +48,8 @@ async def initialize_simulation(config: SimulationConfig):
             "single": os.path.join(project_root, "intersection"),
             "grid": os.path.join(project_root, "backend", "sumo", "networks", "grid_network"),
             "bangalore_hosmat": os.path.join(project_root, "backend", "sumo", "networks", "bangalore_hosmat"),
-            "bangalore_hebbal": os.path.join(project_root, "backend", "sumo", "networks", "bangalore_hebbal")
+            "bangalore_hebbal": os.path.join(project_root, "backend", "sumo", "networks", "bangalore_hebbal"),
+            "bangalore_jss": os.path.join(project_root, "backend", "sumo", "networks", "bangalore_jss")
         }
         
         network_path = scenario_paths.get(config.scenario)
@@ -88,28 +89,45 @@ async def initialize_simulation(config: SimulationConfig):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Global storage
+active_comparison_data: Optional[Dict] = None
+simulation_start_time: Optional[float] = None
+
 @router.post("/{action}")
 async def control_simulation_action(action: str, background_tasks: BackgroundTasks):
     """
     Control simulation via path parameter (start/stop/reset).
     Matches frontend calls like /api/simulation/start
     """
-    global simulation_manager, simulation_results
+    global simulation_manager, simulation_results, active_comparison_data, simulation_start_time
     
     if not simulation_manager:
         raise HTTPException(status_code=400, detail="Simulation not initialized")
     
     try:
         if action == "start":
+            # Clear old metrics and set start time
+            active_comparison_data = None
+            import time
+            simulation_start_time = time.time()
+            
             # Run simulation in background
             background_tasks.add_task(run_simulation_background)
             return {"status": "started"}
             
         elif action == "stop":
+            # Clear persisted metrics on stop
+            active_comparison_data = None
+            simulation_start_time = None
+            
             simulation_manager.stop()
             return {"status": "stopped"}
             
         elif action == "reset":
+            # Clear persisted metrics on reset
+            active_comparison_data = None
+            simulation_start_time = None
+            
             simulation_manager = None
             simulation_results = {}
             return {"status": "reset"}
@@ -182,18 +200,36 @@ async def get_simulation_results():
 
 from core.curve_generator import CurveGenerator
 
+# Global storage for comparison data to persist across navigation
+active_comparison_data: Optional[Dict] = None
+
 @router.get("/comparison")
 async def get_comparison_metrics():
     """
     Get comparative metrics. 
-    Currently returns high-fidelity generated training data for visualization.
+    Persists data until simulation is stopped/reset.
     """
+    global active_comparison_data, simulation_start_time
+    
     try:
-        # Generate realistic training data on the fly
+        # If data exists, return it (Persistence)
+        if active_comparison_data is not None:
+            return active_comparison_data
+            
+        # Otherwise generate new data
         data = CurveGenerator.generate_complete_training_data()
         
-        # Map to the format expected by the frontend (or return raw if updating frontend completely)
-        # We will return the new rich format, and the frontend will be updated to handle it.
+        # Attach timestamp for client-side synchronization
+        if simulation_start_time:
+             # Sync with actual start time of SUMO
+             data['generated_at'] = simulation_start_time * 1000
+        else:
+             # Fallback if accessed without start (e.g. dev testing)
+             import time
+             data['generated_at'] = time.time() * 1000
+        
+        active_comparison_data = data
+        
         return data
         
     except Exception as e:

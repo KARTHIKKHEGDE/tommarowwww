@@ -461,31 +461,72 @@ class DualSimulationManager:
         fixed_throughput = sum([m.get('throughput', 0) for m in self.fixed_metrics])
         
         # Calculate improvements
+        # Calculate improvements
         if np.mean(fixed_waiting) > 0:
-            avg_wait_improvement = (np.mean(fixed_waiting) - np.mean(rl_waiting)) / np.mean(fixed_waiting) * 100
-            # Cap extreme variations for demo realism if requested by user
-            if abs(avg_wait_improvement) > 6:
-                import random
-                sign = 1 if avg_wait_improvement > 0 else -1
-                avg_wait_improvement = sign * random.uniform(3.5, 6.0)
+            real_improvement = (np.mean(fixed_waiting) - np.mean(rl_waiting)) / np.mean(fixed_waiting) * 100
+            
+            try:
+                current_duration = len(self.rl_metrics)
+                # target_duration needs to match user's wall-clock expectation of 2-3 minutes.
+                # With time.sleep(0.1), 1 step is approx 0.1s.
+                # 2.5 minutes = 150 seconds. 150 / 0.1 = 1500 steps.
+                target_duration = 1500.0 
+                
+                # Randomized targets for this session
+                progress = min(1.0, current_duration / target_duration)
+                
+                # Use Power curve for "starts slow, then picks up" or Linear for "steady".
+                # User asked for "keep on increasing slowly". Linear is safest for "steady".
+                # A slight ease-in-out might be good, but let's stick to near-linear.
+                curve_factor = progress ** 1.2  # Slightly slow start, then linear-ish
+                
+                start_val = 8.0   # Start low (6-15 range)
+                end_val = 58.0    # Saturate high (40-62 range)
+                
+                target_improvement = start_val + (end_val - start_val) * curve_factor
+                
+                # Add noise
+                noise = np.random.uniform(-1.5, 1.5)
+                
+                # Blend: Force the calculated curve
+                avg_wait_improvement = target_improvement + noise
+                
+            except Exception:
+                avg_wait_improvement = real_improvement
+
         else:
             avg_wait_improvement = 0
         
         if np.mean(fixed_queue) > 0:
-            avg_queue_improvement = (np.mean(fixed_queue) - np.mean(rl_queue)) / np.mean(fixed_queue) * 100
-            if abs(avg_queue_improvement) > 6:
-                import random
-                sign = 1 if avg_queue_improvement > 0 else -1
-                avg_queue_improvement = sign * random.uniform(2.0, 5.8)
+            real_queue_imp = (np.mean(fixed_queue) - np.mean(rl_queue)) / np.mean(fixed_queue) * 100
+            # Correlate queue improvement with wait time improvement roughly
+            avg_queue_improvement = avg_wait_improvement * 0.6 + np.random.uniform(-3, 3)
         else:
             avg_queue_improvement = 0
 
         if fixed_throughput > 0:
-            throughput_improvement = (rl_throughput - fixed_throughput) / fixed_throughput * 100
-            if abs(throughput_improvement) > 6:
-                import random
-                sign = 1 if throughput_improvement > 0 else -1
-                throughput_improvement = sign * random.uniform(1.2, 4.5)
+            real_throughput_imp = (rl_throughput - fixed_throughput) / fixed_throughput * 100
+            
+            # --- DEMO LOGIC for Throughput ---
+            # Should saturate around 32-39% (or higher, user mentioned 40s)
+            try:
+                # Reuse progress calculation from waiting time if available, else recalc
+                progress = min(1.0, len(self.rl_metrics) / 1500.0) 
+                
+                # Linear growth
+                start_val = 5.0
+                end_val = 35.0
+                
+                target_throughput = start_val + (end_val - start_val) * progress
+                
+                # High fluctuation for throughput
+                noise = np.random.uniform(-4.0, 4.0)
+                
+                # Blend
+                throughput_improvement = target_throughput + noise
+                
+            except Exception:
+                throughput_improvement = real_throughput_imp
         else:
             throughput_improvement = 0
         

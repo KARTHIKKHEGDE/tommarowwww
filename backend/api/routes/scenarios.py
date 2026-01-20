@@ -64,6 +64,16 @@ async def list_scenarios() -> List[Scenario]:
             description="Hebbal service road junction. Brutal congestion with heavy bus and truck flow, excluding flyovers.",
             badge="HEAVY FLOW",
             features=["Lane Discipline Issues", "Heavy Bus/Truck Flow", "Multi-Agent RL"]
+        ),
+        Scenario(
+            id="bangalore_jss",
+            name="BANGALORE - JSS JUNCTION",
+            code="SCENARIO_BLR_006",
+            complexity="HIGH",
+            agents="02",
+            description="JSS Junction in Bangalore. High density traffic flow with complex signal timings.",
+            badge="REAL WORLD",
+            features=["Urban Traffic Corridors", "Real World Map", "Signal Optimization"]
         )
     ]
     
